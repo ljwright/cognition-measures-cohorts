@@ -1,0 +1,342 @@
+---
+title: "Cognition Measures in the British Birth Cohorts"
+author: "Liam Wright"
+date: "16 November 2021"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+# Introduction
+
+In this document, I show code to clean individual cognition measures in the British Birth Cohorts. For the NCDS, BCS70 and MCS, the raw data files were downloaded from the UK Data Service (End User Licence versions). Data for the NSHD were obtained from David Bann. I clean cognition variables that were given to all sample members for a given cohort, rather than those given to sub-samples or to the children of sample members.
+
+The source information for the cognition measures was drawn from Vanessa Moulton's ([2020](https://www.closer.ac.uk/cross-study-data-guides/cognitive-measures-guide/)) guide to cognitive measures in five British birth cohort studies written for CLOSER.
+
+```{r}
+library(tidyverse)
+library(haven)
+library(labelled)
+library(skimr)
+library(scales)
+library(glue)
+
+negative_to_na <- function(x){
+  ifelse(x < 0, NA, x)
+}
+
+get_correct <- function(df, vars, new_var, 
+                        correct_func = function(x) ifelse(x == 1, 1, 0)){
+  df %>%
+    select(id = 1, {{ vars }}) %>%
+    mutate(across(-id, 
+                  list(correct = correct_func,
+                       observed = ~ ifelse(is.na(.x) | .x < 0, 0, 1)))) %>%
+    select(id, matches("(correct|observed)")) %>%
+    rowwise() %>%
+    summarise(id = id, 
+              correct = sum(c_across(matches("_correct")), na.rm = TRUE),
+              observed = sum(c_across(matches("_observed")), na.rm = TRUE),
+              .groups = "drop") %>%
+    mutate(correct = ifelse(observed != 0, correct, NA)) %>%
+    select(id, {{new_var}} := correct)
+}
+
+get_descriptives <- function(df){
+  my_skim <- skim_with(numeric = sfl(n = ~ sum(!is.na(.)),
+                                     missing = ~ sum(is.na(.)),
+                                     mean = ~ mean(., na.rm = TRUE),
+                                     sd = ~ sd(., na.rm = TRUE),
+                                     median = ~ median(., na.rm = TRUE),
+                                     min = ~ min(., na.rm = TRUE),
+                                     max = ~ max(., na.rm = TRUE)),
+                       base = sfl(),
+                       append = FALSE)
+  my_skim(df, -1) %>%
+    yank("numeric")
+}
+
+plot_cog <- function(df){
+  df %>% 
+    pivot_longer(-1) %>%
+    ggplot() + 
+    aes(x = value) +
+    facet_wrap(~ name, scales = "free") +
+    scale_y_continuous(labels = comma) +
+    geom_bar() +
+    labs(x = NULL, y = NULL)
+}
+
+plot_cor <- function(df){
+  df_cor <- df %>%
+    rename(id = 1) %>%
+    pivot_longer(-1) %>%
+    full_join(., ., by = "id") %>%
+    filter(name.x < name.y) %>%
+    drop_na()
+  
+  cor_df <- df_cor %>% 
+    group_by(name.x, name.y) %>% 
+    summarise(cor = cor(value.x, value.y, method = "spearman"),
+              .groups = "drop") %>%
+    mutate(string = glue("corr = {round(cor, 2)}"))
+  
+  ggplot(df_cor) +
+    aes(x = value.x, y = value.y) +
+    facet_grid(name.y ~ name.x, scales = "free") +
+    geom_jitter(alpha = 0.05, color = "grey60") +
+    geom_smooth() +
+    geom_text(data = cor_df, aes(label = string, x = Inf, y = Inf),
+              color = "red", hjust = 1.1, vjust = 1.1) +
+    labs(x = NULL, y = NULL)
+}
+```
+
+# National Child Development Study (1958 cohort)
+
+## Individual Cognition Measures
+### Age 7
+```{r}
+ncds_0016_raw <- read_dta("D:/NCDS/0y-16y/ncds0123.dta")
+
+ncds_07 <- ncds_0016_raw %>%
+  mutate(
+    reading_07 = negative_to_na(n92), # Southgate Group Reading Test; Verbal (Reading)
+    arithmetic_07 = negative_to_na(n90), # Problem Arithmetic Test; Arithmetic
+    visual_07 = negative_to_na(n457), # Copying Designs Test; Visual-Spatial
+    drawing_07 = negative_to_na(n1840), # Human Figure Drawing; General Ability (Perceptual)
+  ) %>%
+  select(id = 1, matches("_07"))
+```
+
+```{r, echo = FALSE}
+get_descriptives(ncds_07)
+plot_cog(ncds_07)
+plot_cor(ncds_07)
+```
+
+### Age 11
+```{r}
+ncds_11 <- ncds_0016_raw %>%
+  mutate(
+    verbal_11 = negative_to_na(n914), # General Ability Test; Verbal Reasoning
+    nonverbal_11 = negative_to_na(n917), # General Ability Test; Verbal Reasoning
+    reasoning_11 = negative_to_na(n920), # General Ability Test; Sum of Verbal and Non-Verbal
+    reading_11 = negative_to_na(n923), # Reading Comprehension Test; Verbal (Reading)
+    arithmetic_11 = negative_to_na(n926), # Mathematics Test; Arithmetic
+    visual_11 = negative_to_na(n929), # Copying Designs Test; Visual-Spatial
+  ) %>%
+  select(id = 1, matches("_11"))
+```
+
+```{r, echo = FALSE}
+get_descriptives(ncds_11)
+plot_cog(ncds_11)
+plot_cor(ncds_11)
+```
+Note, the excess of scores of zero in the verbal and non-verbal reasoning tests.
+
+### Age 16
+```{r}
+ncds_16 <- ncds_0016_raw %>%
+  mutate(
+    reading_16 = negative_to_na(n2928), # Reading Comprehension Test; Verbal (Reading)
+    maths_16 = negative_to_na(n2930), # Mathematics Test; Numeric and Geometric Skills
+  ) %>%
+  select(id = 1, matches("_16"))
+```
+
+```{r, echo = FALSE}
+get_descriptives(ncds_16)
+plot_cog(ncds_16)
+rm(ncds_0016_raw)
+```
+
+### Age 50
+
+```{r}
+ncds_50_raw <- read_dta("D:/NCDS/50y/ncds_2008_followup.dta")
+```
+
+```{r}
+ncds_50 <- ncds_50_raw %>%
+  mutate(
+    fluency_50 = negative_to_na(N8CFANI), # Verbal Fluency (Animal Naming) Test; Verbal (Fluency)
+    memory_immediate_50 = negative_to_na(N8CFLISN), # Verbal Learning/ Word List Recall Test (Immediate); Verbal (Memory)     
+    memory_delayed_50 = negative_to_na(N8CFLISD), # Verbal Learning/ Word List Recall Test (Delayed); Verbal (Memory) 
+    process_speed_50 = negative_to_na(N8CFRC), # Timed Letter Search/ Letter Cancellation Test; Processing Speed
+    process_accuracy_50 = negative_to_na(N8CFMIS), # Timed Letter Search/ Letter Cancellation Test; Processing Accuracy (# Mistakes)
+  ) %>%
+  select(id = 1, matches("_50"))
+```
+
+```{r, echo = FALSE}
+get_descriptives(ncds_50)
+plot_cog(ncds_50)
+plot_cor(ncds_50)
+```
+
+## Measures of IQ
+### Age 7
+### Age 11
+### Age 16
+### Age 50
+
+# British Cohort Study (1970 cohort)
+## Individual Cognition Measures
+### Age 5
+```{r}
+bcs_05_raw <- read_dta("D:/BCS70/5y/f699c.dta")
+```
+
+```{r}
+bcs_05 <- bcs_05_raw %>%
+  mutate(
+    # f099; Schonell Reading Test; Verbal (Reading); Able to Read (Not cleaned correctly) TO ADD
+    reading_05 = negative_to_na(f100), # Schonell Reading Test; Verbal (Reading) (Not cleaned correctly)
+    vocabulary_05 = case_when( # English Picture Vocabulary Test; Verbal (Vocabulary)
+      f086 == 91 ~ 56 - f087, # Maximum possible correct - errors if no ceiling item
+      f085 == 0 ~ 0, # Minimum possible score if no base item (in practice, could be 0-4)
+      between(as.numeric(f117), 1, 56) ~ as.numeric(f117), # This is different to that in Moulton et al. (2020)
+      TRUE ~ NA_real_
+    ), 
+    visual_05 = negative_to_na(f119), # Copying Designs Test (CDT); Visual spatial; Note, missingness is less than number who didn't attempt all designs
+    drawing_harris_v1_05 = negative_to_na(f113), # Human Figure Drawing; General Ability (Perceptual); 1st figure, Harris Scoring
+    drawing_harris_v2_05 = negative_to_na(f114), # Human Figure Drawing; General Ability (Perceptual); 2nd figure, Harris Scoring
+    drawing_koppitz_v1_05 = negative_to_na(f115), # Human Figure Drawing; General Ability (Perceptual); 1st figure, Koppitz Scoring
+    drawing_koppitz_v2_05 = negative_to_na(f116), # Human Figure Drawing; General Ability (Perceptual); 2nd figure, Koppitz Scoring
+    spatial_05 = negative_to_na(f118), # Complete a Profile Test; Spatial Development
+  ) %>%
+  select(id = 1, matches("_05"))
+```
+
+```{r, echo = FALSE}
+get_descriptives(bcs_05)
+plot_cog(bcs_05)
+plot_cor(bcs_05)
+rm(bcs_05_raw)
+```
+
+### Age 10
+```{r}
+bcs_10_derived <- read_dta("D:/BCS70/10y/bcs3derived.dta")
+bcs_10_raw <- read_dta("D:/BCS70/10y/sn3723.dta")
+```
+
+```{r}
+bcs_10 <- bcs_10_derived %>%
+  mutate(
+    reading_10 = negative_to_na(BD3RREAD), # Edinburgh Reading Test; Verbal (Word Recognition)
+    maths_10 = negative_to_na(BD3MATHS), # Friendly Maths Test; Mathematics
+    maths_10 = negative_to_na(BD3MATHS), 
+  ) %>%
+  select(id = 1, matches("_10")) %>%
+  full_join(get_correct(bcs_10_raw, i8:i97, 
+                        comp_sentence_10, 
+                        function(x) ifelse(x == 0, 1, 0)), # Pictorial Language Comprehension Test; Verbal; Vocabulary and Sentence Items,
+            by = "id") %>%
+  full_join(get_correct(bcs_10_raw, i98:i110, 
+                        comp_sequence_10), # # Pictorial Language Comprehension Test; Verbal; Sequence Items
+            by = "id") %>%
+  mutate(comp_total_10 = comp_sentence_10 + comp_sequence_10) %>% # THIS IS GOING TO CAUSE A PROBLEM WHERE ANSWER FOR COMP_SENTENCE_10 BUT NOT COMP_SEQUENCE_10 AND VICE VERSA
+  full_join(get_correct(bcs_10_raw, i3815:i3864, spelling_10), # Spelling Dictation Task; Verbal (Spelling)
+            by = "id") %>%
+  full_join(get_correct(bcs_10_raw, i4201:i4221, bas_sim_10), # BAS Similarities (Words); Verbal (Reasoning); Slightly different sample sizes
+            by = "id") %>%
+  full_join(get_correct(bcs_10_raw, i3504:i3540, bas_words_10), # BAS Word Definitions; Verbal Knowledge (Acquired and Expressive)
+            by = "id") %>%
+  full_join(get_correct(bcs_10_raw, i3541:i3574, bas_digits_10), # BAS Word Definitions; Short Term Auditory Memory
+            by = "id") %>%
+  full_join(get_correct(bcs_10_raw, i3617:i3644, bas_matrices_10), # BAS Matrices; Inductive Non-Verbal Reasoning; Different sample sizes
+            by = "id")
+```
+
+```{r, echo = FALSE}
+get_descriptives(bcs_10)
+plot_cog(bcs_10)
+plot_cor(bcs_10)
+rm(bcs_10_derived, bcs_10_raw)
+```
+
+
+### Age 16
+```{r}
+bcs_16_reading <- read_dta("D:/BCS70/16y/bcs1986_reading_matrices.dta")
+bcs_16_maths <- read_dta("D:/BCS70/16y/bcs70_16-year_arithmetic_data.dta")
+bcs_16_raw <- read_dta("D:/BCS70/16y/bcs7016x.dta")
+```
+
+```{r}
+make_correct <- function(x){
+  lbls <- val_labels(x)
+  case_when(x == lbls[str_detect(names(lbls), "^correct")] ~ 1,
+            x < 0 ~ NA_real_,
+            x >= 0 ~ 0)
+}
+
+bcs_16 <- bcs_16_reading %>%
+  full_join(bcs_16_maths, by = c("BCSID" = "bcsid")) %>%
+  mutate(
+    ert_skim_16 = negative_to_na(SCR_A), # Edinburgh Reading Test; Verbal (Reading); Skimming
+    ert_vocab_16 = negative_to_na(SCR_B), # Edinburgh Reading Test; Verbal (Reading); Skimming
+    ert_facts_16 = negative_to_na(SCR_C), # Edinburgh Reading Test; Verbal (Reading); Skimming
+    ert_pov_16 = negative_to_na(SCR_D), # Edinburgh Reading Test; Verbal (Reading); Skimming
+    ert_comp_16 = negative_to_na(SCR_E), # Edinburgh Reading Test; Verbal (Reading); Skimming
+    ert_total_16 = negative_to_na(SCRTOTAL), # Edinburgh Reading Test; Verbal (Reading)
+    bas_matrices_16 = negative_to_na(SCR_M), # BAS Matrices; Inductive Non-Verbal Reasoning
+    apu_arithmetic_16 = negative_to_na(mathscore), # APU Arithmetic Test; Arithmetic Achievement
+  ) %>%
+  full_join(bcs_16_raw %>% 
+              mutate(across(matches("^cvo"), make_correct)) %>%
+              get_correct(cvo1:cvo75, apu_vocab_16), # APU Vocabulary Test; Verbal Vocabulary; Different to Total Score
+            by = "id") %>%
+  full_join(get_correct(bcs_16_raw, c7a1:c7a100, spelling_a_16), # Spelling Test; Verbal (Spelling); Test A
+            by = "id") %>%
+  full_join(get_correct(bcs_16_raw, c7b1:c7b100, spelling_b_16), # Spelling Test; Verbal (Spelling); Test B
+            by = "id") %>%
+  mutate(spelling_total_16 = spell_a_16 + spelling_b_16) %>% # Spelling Test; Verbal (Spelling); Total Score, not same as guide as I clean Tests A and B separately
+  select(id = 1, matches("_16"))
+```
+
+```{r, echo = FALSE}
+get_descriptives(bcs_16)
+plot_cog(bcs_16)
+plot_cor(bcs_16)
+rm(bcs_16_reading, bcs_16_maths, bcs_16_raw)
+```
+
+
+### Age 34
+### Age 42
+### Age 46
+
+## Measures of IQ
+### Age 5
+### Age 10
+### Age 16
+### Age 34
+### Age 42
+### Age 46
+
+# Millennium Cohort Study (2000/2001 cohort)
+## Individual Cognition Measures
+### Age 9 Months
+### Age 3
+### Age 5
+### Age 7
+### Age 11
+### Age 14
+### Age 17
+
+## Measures of IQ
+### Age 9 Months
+### Age 3
+### Age 5
+### Age 7
+### Age 11
+### Age 14
+### Age 17
+
+# Harmonising Cognitive Measures Across Cohorts
